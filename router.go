@@ -237,3 +237,19 @@ func (r *router) matchAndDispatch(messages <-chan *packets.PublishPacket, order 
 	}()
 	return ackOutChan
 }
+
+type GoLimit struct {
+	ch chan struct{}
+}
+
+func NewGoLimit(max int) *GoLimit {
+	return &GoLimit{ch: make(chan struct{}, max)}
+}
+
+func (g *GoLimit) Add() {
+	g.ch <- struct{}{}
+}
+
+func (g *GoLimit) Done() {
+	<-g.ch
+}
