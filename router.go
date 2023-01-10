@@ -85,12 +85,13 @@ type router struct {
 	routes         *list.List
 	defaultHandler MessageHandler
 	messages       chan *packets.PublishPacket
+	goroutineLimit *GoLimit
 }
 
 // newRouter returns a new instance of a Router and channel which can be used to tell the Router
 // to stop
 func newRouter() *router {
-	router := &router{routes: list.New(), messages: make(chan *packets.PublishPacket)}
+	router := &router{routes: list.New(), messages: make(chan *packets.PublishPacket), goroutineLimit: NewGoLimit(1000)}
 	return router
 }
 
@@ -184,12 +185,14 @@ func (r *router) matchAndDispatch(messages <-chan *packets.PublishPacket, order 
 					} else {
 						hd := e.Value.(*route).callback
 						wg.Add(1)
+						r.goroutineLimit.Add()
 						go func() {
 							hd(client, m)
 							if !client.options.AutoAckDisabled {
 								m.Ack()
 							}
 							wg.Done()
+							r.goroutineLimit.Done()
 						}()
 					}
 					sent = true
@@ -201,12 +204,14 @@ func (r *router) matchAndDispatch(messages <-chan *packets.PublishPacket, order 
 						handlers = append(handlers, r.defaultHandler)
 					} else {
 						wg.Add(1)
+						r.goroutineLimit.Add()
 						go func() {
 							r.defaultHandler(client, m)
 							if !client.options.AutoAckDisabled {
 								m.Ack()
 							}
 							wg.Done()
+							r.goroutineLimit.Done()
 						}()
 					}
 				} else {
@@ -236,4 +241,20 @@ func (r *router) matchAndDispatch(messages <-chan *packets.PublishPacket, order 
 		DEBUG.Println(ROU, "matchAndDispatch exiting")
 	}()
 	return ackOutChan
+}
+
+type GoLimit struct {
+	ch chan struct{}
+}
+
+func NewGoLimit(max int) *GoLimit {
+	return &GoLimit{ch: make(chan struct{}, max)}
+}
+
+func (g *GoLimit) Add() {
+	g.ch <- struct{}{}
+}
+
+func (g *GoLimit) Done() {
+	<-g.ch
 }
